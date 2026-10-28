@@ -88,6 +88,7 @@ body.radar-mode #radarView{display:block}
 .live-badge{padding:5px 7px;border-radius:5px;background:#12372d;color:#65e9ac;font-size:9px;font-weight:800}
 .live-badge.historical{background:#263347;color:#c2d1e3}
 .time-btn{display:grid;place-items:center;flex-shrink:0;width:29px;height:29px;border:1px solid var(--border);border-radius:50%;background:#19283b;color:white;font-size:11px}
+.time-btn:disabled{opacity:.35;cursor:not-allowed}
 .time-btn.play{width:32px;height:32px;border:0;background:#08b5d8;color:#04121d;font-size:13px}
 .slider-wrap{flex:1;min-width:30px;padding:0 4px}
 #timeSlider{display:block;width:100%;accent-color:var(--cyan);cursor:pointer}
@@ -239,7 +240,7 @@ body.radar-mode #radarView{display:block}
     </div>
 
     <div class="timeline-controls">
-      <button class="time-btn" id="firstBtn" title="Imagem mais antiga">|◀</button>
+      <button class="time-btn" id="firstBtn" title="Imagem anterior">◀|</button>
       <button class="time-btn play" id="playBtn" title="Animar radar">▶</button>
       <button class="time-btn" id="nextBtn" title="Próxima imagem">▶|</button>
       <div class="slider-wrap"><input id="timeSlider" type="range" min="0" max="0" value="0" step="1" aria-label="Horário da imagem"></div>
@@ -273,7 +274,7 @@ body.radar-mode #radarView{display:block}
 const FRANCA = [-20.5394,-47.4008];
 const API_URL = "https://api.rainviewer.com/public/weather-maps.json";
 const GOES_GEOCOLOR_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/Most_Recent_MERGEDGC/ImageServer";
-const GOES_IR_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/ABI13_current/ImageServer";
+const GOES_IR_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/ABI13_Last_24hr/ImageServer";
 const REFRESH_MS = 5 * 60 * 1000;
 const GOES_REFRESH_MS = 10 * 60 * 1000;
 const $ = id => document.getElementById(id);
@@ -292,6 +293,11 @@ let animationWaiting = false;
 let satelliteLayers = { geocolor:null, infrared:null };
 let satelliteMode = false;
 let satelliteProduct = "geocolor";
+let infraredFrames = [];
+let infraredFrameIndex = 0;
+let infraredFramesLoadedAt = 0;
+let infraredFramesPromise = null;
+let infraredAnimationTimer = null;
 
 const map = L.map("map", {
   zoomControl:false,
@@ -357,7 +363,7 @@ function openPage(page){
   }
 }
 
-/* VOLTAR PARA A CAMADA DE RADAR */
+/* CAMADAS E NAVEGAÇÃO TEMPORAL */
 function removeSatelliteLayers(){
   Object.values(satelliteLayers).forEach(layer=>{
     if(layer && map.hasLayer(layer)) map.removeLayer(layer);
@@ -366,6 +372,7 @@ function removeSatelliteLayers(){
 
 function activateRadarMode(){
   openPage("radar");
+  stopAnimation();
   satelliteMode=false;
   $("precipBtn").classList.add("active");
   $("satelliteBtn").classList.remove("active");
@@ -374,34 +381,225 @@ function activateRadarMode(){
   $("layerDescription").textContent="Radar observado · RainViewer";
   $("radarTimeline").classList.remove("hidden");
   $("sourceNote").textContent="Fonte: RainViewer · imagens observadas";
+  $("playBtn").title="Animar radar";
   removeSatelliteLayers();
+
   if(activeRadarLayer && !map.hasLayer(activeRadarLayer)){
     activeRadarLayer.addTo(map);
   }else if(!activeRadarLayer && frames.length){
     showFrame(frameIndex);
   }
+
+  updateTimeline();
   requestAnimationFrame(()=>map.invalidateSize());
 }
 
-/* ABRIR O GEOCOLOR OU O INFRAVERMELHO DO GOES */
+/* ABRIR GEOCOLOR OU INFRAVERMELHO GOES */
 function activateSatelliteMode(product="geocolor"){
   openPage("radar");
   stopAnimation();
   satelliteMode=true;
   satelliteProduct=product;
+
   $("precipBtn").classList.remove("active");
   $("satelliteBtn").classList.toggle("active",product==="geocolor");
   $("infraredBtn").classList.toggle("active",product==="infrared");
-  $("radarTimeline").classList.add("hidden");
+  $("radarTimeline").classList.toggle("hidden",product!=="infrared");
+
   requestNumber++;
+
   if(pendingRadarLayer){
     if(map.hasLayer(pendingRadarLayer))map.removeLayer(pendingRadarLayer);
     pendingRadarLayer=null;
   }
+
   if(activeRadarLayer && map.hasLayer(activeRadarLayer))map.removeLayer(activeRadarLayer);
   removeSatelliteLayers();
-  enableSatellite(product);
+
+  if(product==="infrared"){
+    $("layerTitle").textContent="Satélite GOES · Infravermelho (canal 13)";
+    $("layerDescription").textContent="Histórico móvel de 24 horas · NOAA/NESDIS";
+    $("sourceNote").textContent="Fonte: NOAA/NESDIS · GOES ABI canal 13";
+    $("playBtn").title="Reproduzir animação infravermelha";
+
+    if(infraredFrames.length && Date.now()-infraredFramesLoadedAt < 8*60*1000){
+      if(infraredFrameIndex>=infraredFrames.length)infraredFrameIndex=infraredFrames.length-1;
+      updateInfraredTimeline();
+      enableSatellite("infrared");
+    }else{
+      $("selectedTime").textContent="Buscando horários do GOES…";
+      $("timeSubtitle").textContent="Consultando o arquivo móvel das últimas 24 horas";
+      $("liveText").textContent="CARREGANDO";
+
+      setSatelliteStatus("Buscando arquivo…","warning","Consultando as imagens infravermelhas GOES das últimas 24 horas.");
+
+      loadInfraredTimeline().then(()=>{
+        if(satelliteMode && satelliteProduct==="infrared"){
+          infraredFrameIndex=infraredFrames.length-1;
+          updateInfraredTimeline();
+          enableSatellite("infrared");
+        }
+      }).catch(error=>{
+        console.error("Não foi possível carregar o histórico infravermelho GOES:",error);
+        if(satelliteMode && satelliteProduct==="infrared"){
+          $("selectedTime").textContent="Histórico indisponível";
+          $("timeSubtitle").textContent="Não foi possível consultar os horários da NOAA";
+          $("liveText").textContent="ERRO";
+          $("liveBadge").classList.add("historical");
+          setSatelliteStatus("Histórico indisponível","error","A NOAA não retornou a lista de horários. Clique em Atualizar e tente novamente.");
+        }
+      });
+    }
+  }else{
+    enableSatellite("geocolor");
+  }
+
   requestAnimationFrame(()=>map.invalidateSize());
+}
+
+/* Busca os horários exatos da camada temporal NOAA. Se a consulta de cenas falhar,
+   usa o intervalo temporal publicado pelo próprio serviço como alternativa. */
+async function loadInfraredTimeline(force=false){
+  if(infraredFramesPromise && !force)return infraredFramesPromise;
+
+  infraredFramesPromise=(async()=>{
+    const metadataResponse=await fetch(GOES_IR_URL+"?f=json",{cache:"no-store"});
+    if(!metadataResponse.ok)throw new Error("Falha ao consultar metadados NOAA: HTTP "+metadataResponse.status);
+
+    const metadata=await metadataResponse.json();
+    if(metadata.error)throw new Error(metadata.error.message||"Erro no serviço NOAA");
+
+    const extent=metadata.timeInfo && metadata.timeInfo.timeExtent;
+    let times=[];
+
+    try{
+      const params=new URLSearchParams({
+        where:"1=1",
+        outFields:"objectid,start_time,end_time",
+        returnGeometry:"false",
+        orderByFields:"start_time ASC",
+        resultRecordCount:"1000",
+        f:"json"
+      });
+
+      const queryResponse=await fetch(GOES_IR_URL+"/query?"+params.toString(),{cache:"no-store"});
+
+      if(queryResponse.ok){
+        const result=await queryResponse.json();
+
+        if(!result.error && Array.isArray(result.features)){
+          times=result.features.map(feature=>{
+            const attributes=feature.attributes||{};
+            const fields={};
+
+            Object.keys(attributes).forEach(key=>{
+              fields[key.toLowerCase()]=attributes[key];
+            });
+
+            const start=Number(fields.start_time);
+            const end=Number(fields.end_time);
+
+            if(Number.isFinite(start) && Number.isFinite(end) && end>start){
+              return Math.round((start+end)/2);
+            }
+            if(Number.isFinite(end) && end>0)return end;
+            if(Number.isFinite(start) && start>0)return start;
+
+            return null;
+          }).filter(Number.isFinite);
+        }
+      }
+    }catch(queryError){
+      console.warn("Consulta detalhada de horários NOAA falhou; será usado o intervalo publicado.",queryError);
+    }
+
+    times=[...new Set(times)].sort((a,b)=>a-b);
+
+    if(times.length<2){
+      if(!extent || !Number.isFinite(Number(extent[0])) || !Number.isFinite(Number(extent[1]))){
+        throw new Error("O serviço não publicou o intervalo temporal das imagens.");
+      }
+
+      const start=Number(extent[0]);
+      const end=Number(extent[1]);
+      const step=10*60*1000;
+      const generated=[];
+
+      for(let t=Math.ceil(start/step)*step;t<=end;t+=step){
+        generated.push(t);
+      }
+
+      times=generated;
+    }
+
+    if(times.length<2)throw new Error("Não há imagens suficientes para animar o histórico.");
+
+    infraredFrames=times.map(time=>({time}));
+    infraredFramesLoadedAt=Date.now();
+    infraredFrameIndex=infraredFrames.length-1;
+
+    return infraredFrames;
+  })();
+
+  try{
+    return await infraredFramesPromise;
+  }finally{
+    infraredFramesPromise=null;
+  }
+}
+
+function updateInfraredTimeline(){
+  if(!infraredFrames.length)return;
+
+  infraredFrameIndex=Math.max(0,Math.min(infraredFrameIndex,infraredFrames.length-1));
+
+  const current=infraredFrames[infraredFrameIndex];
+  const latest=infraredFrameIndex===infraredFrames.length-1;
+
+  $("selectedTime").textContent=formatTime(current.time/1000,true)+" (local)";
+  $("timeSubtitle").textContent=latest
+    ? "GOES canal 13 · horário local · quadro mais recente"
+    : "GOES canal 13 · horário local · quadro histórico";
+
+  $("oldestTime").textContent=formatTime(infraredFrames[0].time/1000,false);
+  $("newestTime").textContent=formatTime(infraredFrames[infraredFrames.length-1].time/1000,false);
+
+  $("timeSlider").min="0";
+  $("timeSlider").max=String(infraredFrames.length-1);
+  $("timeSlider").value=String(infraredFrameIndex);
+
+  $("liveBadge").classList.toggle("historical",!latest);
+  $("liveText").textContent=latest?"MAIS RECENTE":"HISTÓRICO";
+
+  $("firstBtn").disabled=infraredFrameIndex===0;
+  $("nextBtn").disabled=infraredFrameIndex===infraredFrames.length-1;
+}
+
+function setInfraredFrame(index){
+  if(!infraredFrames.length)return;
+
+  infraredFrameIndex=Math.max(0,Math.min(Number(index),infraredFrames.length-1));
+  updateInfraredTimeline();
+
+  const layer=satelliteLayers.infrared;
+
+  if(layer){
+    const selectedTime=new Date(infraredFrames[infraredFrameIndex].time);
+    layer.setTimeRange(selectedTime,selectedTime);
+  }
+}
+
+function scheduleInfraredAnimation(){
+  if(infraredAnimationTimer!==null)clearTimeout(infraredAnimationTimer);
+
+  if(!satelliteMode || satelliteProduct!=="infrared" || $("playBtn").textContent!=="Ⅱ")return;
+
+  infraredAnimationTimer=setTimeout(()=>{
+    if(!satelliteMode || satelliteProduct!=="infrared" || $("playBtn").textContent!=="Ⅱ")return;
+
+    const next=(infraredFrameIndex+1)%infraredFrames.length;
+    setInfraredFrame(next);
+  },1400);
 }
 
 document.querySelectorAll(".nav-btn[data-page]").forEach(button=>{
@@ -457,6 +655,7 @@ function updateHomeStatus(){
   }
 
   const latest=frames[frames.length-1];
+
   $("homeRadarValue").textContent="Conectado";
   $("homeRadarDescription").textContent="Imagens recebidas do RainViewer";
   $("homeTimeValue").textContent=formatTime(latest.time,false);
@@ -467,17 +666,21 @@ function updateTimeline(){
   if(!frames.length)return;
 
   const isLatest=frameIndex===frames.length-1;
+
   $("liveBadge").classList.toggle("historical",!isLatest);
   $("liveText").textContent=isLatest?"MAIS RECENTE":"HISTÓRICO";
   $("selectedTime").textContent=formatTime(frames[frameIndex].time);
   $("timeSubtitle").textContent=isLatest
     ?"Imagem mais recente disponibilizada pela fonte"
     :"Horário da imagem selecionada";
+
   $("oldestTime").textContent=formatTime(frames[0].time,false);
   $("newestTime").textContent=formatTime(frames[frames.length-1].time,false);
+
   $("timeSlider").min="0";
   $("timeSlider").max=String(frames.length-1);
   $("timeSlider").value=String(frameIndex);
+
   updateHomeStatus();
 }
 
@@ -557,6 +760,7 @@ function showFrame(index){
   }
 
   nextLayer.on("load",revealLayer);
+
   nextLayer.on("tileerror",()=>{
     if(!activeRadarLayer){
       $("timeSubtitle").textContent="Carregando imagens do radar...";
@@ -598,6 +802,7 @@ async function loadRadar(){
     radarHost=data.host.replace(/\/$/,"");
 
     const cutoff=Math.floor(Date.now()/1000)-24*60*60;
+
     const newFrames=data.radar.past
       .filter(f=>Number.isFinite(f.time)&&typeof f.path==="string"&&f.time>=cutoff)
       .sort((a,b)=>a.time-b.time);
@@ -623,7 +828,7 @@ async function loadRadar(){
       showFrame(newIndex);
     }else{
       frameIndex=newIndex;
-      updateTimeline();
+      updateHomeStatus();
     }
 
   }catch(error){
@@ -643,33 +848,56 @@ async function loadRadar(){
   }
 }
 
-/* ANIMAÇÃO DO RADAR */
+/* ANIMAÇÃO DO RADAR E CONTROLES TEMPORAIS DO INFRAVERMELHO */
 function scheduleNextAnimation(){
   if(animationTimer!==null)clearTimeout(animationTimer);
 
   if(!animationWaiting && $("playBtn").textContent==="Ⅱ" && !satelliteMode){
     animationTimer=setTimeout(()=>{
       if(!frames.length)return;
+
       const next=(frameIndex+1)%frames.length;
       animationWaiting=true;
       showFrame(next);
-    },120);
+    },650);
   }
 }
 
 function stopAnimation(){
   if(animationTimer!==null)clearTimeout(animationTimer);
+  if(infraredAnimationTimer!==null)clearTimeout(infraredAnimationTimer);
+
   animationTimer=null;
+  infraredAnimationTimer=null;
   animationWaiting=false;
+
   $("playBtn").textContent="▶";
-  $("playBtn").title="Animar radar";
+  $("playBtn").title=satelliteMode && satelliteProduct==="infrared"
+    ?"Reproduzir animação infravermelha"
+    :"Animar radar";
 }
 
 function startAnimation(){
-  if(frames.length<2)return;
   stopAnimation();
+
   $("playBtn").textContent="Ⅱ";
   $("playBtn").title="Pausar animação";
+
+  if(satelliteMode && satelliteProduct==="infrared"){
+    if(infraredFrames.length<2){
+      stopAnimation();
+      return;
+    }
+
+    scheduleInfraredAnimation();
+    return;
+  }
+
+  if(frames.length<2){
+    stopAnimation();
+    return;
+  }
+
   animationWaiting=true;
   showFrame((frameIndex+1)%frames.length);
 }
@@ -681,17 +909,32 @@ $("playBtn").addEventListener("click",()=>{
 
 $("timeSlider").addEventListener("input",e=>{
   stopAnimation();
-  showFrame(Number(e.target.value));
+
+  if(satelliteMode && satelliteProduct==="infrared"){
+    setInfraredFrame(Number(e.target.value));
+  }else{
+    showFrame(Number(e.target.value));
+  }
 });
 
 $("firstBtn").addEventListener("click",()=>{
   stopAnimation();
-  showFrame(0);
+
+  if(satelliteMode && satelliteProduct==="infrared"){
+    setInfraredFrame(infraredFrameIndex-1);
+  }else{
+    showFrame(Math.max(0,frameIndex-1));
+  }
 });
 
 $("nextBtn").addEventListener("click",()=>{
   stopAnimation();
-  showFrame(Math.min(frameIndex+1,frames.length-1));
+
+  if(satelliteMode && satelliteProduct==="infrared"){
+    setInfraredFrame(infraredFrameIndex+1);
+  }else{
+    showFrame(Math.min(frameIndex+1,frames.length-1));
+  }
 });
 
 /* CAMADAS PÚBLICAS DE SATÉLITE GOES (NOAA/NESDIS) */
@@ -701,12 +944,13 @@ function satelliteDetails(product){
       key:"infrared",
       url:GOES_IR_URL,
       title:"Satélite GOES · Infravermelho (canal 13)",
-      description:"GOES-East · canal 13 · 10,3 μm · realce NOAA/NESDIS",
-      source:"Fonte: NOAA/NESDIS · GOES ABI canal 13",
-      loading:"Solicitando a imagem infravermelha do canal 13 à NOAA...",
-      connected:"Imagem infravermelha do GOES recebida. O horário da consulta não é necessariamente o horário exato da observação."
+      description:"GOES-East · canal 13 · 10,3 μm · histórico móvel de 24 horas",
+      source:"Fonte: NOAA/NESDIS · GOES ABI canal 13 · arquivo temporal de 24 horas",
+      loading:"Carregando imagem infravermelha histórica do canal 13...",
+      connected:"Imagem infravermelha temporal do GOES carregada. Consulte o horário do quadro na linha do tempo."
     };
   }
+
   return {
     key:"geocolor",
     url:GOES_GEOCOLOR_URL,
@@ -725,71 +969,84 @@ function setSatelliteStatus(title,state,message){
 }
 
 function createSatelliteLayer(product){
-  if(product!=="infrared" && (!L.esri || typeof L.esri.imageMapLayer!=="function")){
+  if(!L.esri || typeof L.esri.imageMapLayer!=="function"){
     throw new Error("A biblioteca Esri Leaflet não foi carregada.");
   }
+
   const details=satelliteDetails(product);
-  let layer;
-  if(product==="infrared"){
-    /* ABI13_current é um ImageServer em cache; sua rota /tile usa nível/linha/coluna. */
-    layer=L.tileLayer(GOES_IR_URL+"/tile/{z}/{y}/{x}",{
-      minZoom:0,
-      maxZoom:23,
-      pane:"satellitePane",
-      opacity:0.96,
-      attribution:'Imagery &copy; <a href="https://www.nesdis.noaa.gov/" target="_blank" rel="noopener">NOAA/NESDIS</a> · GOES ABI canal 13'
-    });
-  }else{
-    layer=L.esri.imageMapLayer({
-      url:details.url,
-      pane:"satellitePane",
-      opacity:0.96,
-      format:"jpgpng",
-      useCors:true
-    });
+
+  const options={
+    url:details.url,
+    pane:"satellitePane",
+    opacity:0.98,
+    format:"jpgpng",
+    useCors:true,
+    attribution:'Imagery &copy; <a href="https://www.nesdis.noaa.gov/" target="_blank" rel="noopener">NOAA/NESDIS</a> · GOES ABI'
+  };
+
+  if(product==="infrared" && infraredFrames.length){
+    const frameDate=new Date(infraredFrames[infraredFrameIndex].time);
+    options.from=frameDate;
+    options.to=frameDate;
   }
+
+  const layer=L.esri.imageMapLayer(options);
+
   layer.on("loading",()=>{
     if(satelliteMode && satelliteProduct===product){
       setSatelliteStatus("Carregando...","warning",details.loading);
     }
   });
+
   layer.on("load",()=>{
     if(satelliteMode && satelliteProduct===product){
-      setSatelliteStatus(
-        "Conectado",
-        "online",
-        details.connected+" Consulta: "+
-        new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+"."
-      );
+      setSatelliteStatus("Conectado","online",details.connected);
+
+      if(product==="infrared"){
+        scheduleInfraredAnimation();
+      }
     }
   });
-  layer.on("tileerror",event=>{
-    console.error("Erro em um bloco da camada GOES ("+product+"):",event);
-    if(satelliteMode && satelliteProduct===product){
-      setSatelliteStatus("Carregamento parcial","warning","Alguns blocos da imagem não carregaram. Tente Atualizar ou diminuir o zoom.");
-    }
-  });
+
   layer.on("error",event=>{
     console.error("Erro na camada GOES ("+product+"):",event);
+
     if(satelliteMode && satelliteProduct===product){
       setSatelliteStatus("Erro","error","A NOAA não conseguiu entregar esta imagem nesta tentativa. Confira a conexão e tente Atualizar.");
     }
   });
+
   return layer;
 }
 
 function enableSatellite(product="geocolor"){
   try{
     const details=satelliteDetails(product);
-    if(!satelliteLayers[details.key]) satelliteLayers[details.key]=createSatelliteLayer(product);
+
+    if(!satelliteLayers[details.key]){
+      satelliteLayers[details.key]=createSatelliteLayer(product);
+    }
+
     const layer=satelliteLayers[details.key];
-    if(!map.hasLayer(layer)) layer.addTo(map);
+
+    if(product==="infrared" && infraredFrames.length){
+      const frameDate=new Date(infraredFrames[infraredFrameIndex].time);
+      layer.setTimeRange(frameDate,frameDate);
+    }
+
+    if(!map.hasLayer(layer)){
+      layer.addTo(map);
+    }
+
     setSatelliteStatus("Conectando...","warning",details.loading);
+
     $("layerTitle").textContent=details.title;
     $("layerDescription").textContent=details.description;
     $("sourceNote").textContent=details.source;
+
   }catch(error){
     console.error("Não foi possível iniciar a camada GOES:",error);
+
     setSatelliteStatus("Indisponível","error","Não foi possível iniciar esta camada GOES. Verifique se as bibliotecas carregaram.");
   }
 }
@@ -825,9 +1082,33 @@ $("zoomOutBtn").addEventListener("click",()=>map.zoomOut());
 /* ATUALIZAR FONTES */
 function refreshData(){
   loadRadar();
-  Object.values(satelliteLayers).forEach(layer=>{
-    if(layer && map.hasLayer(layer)) layer.redraw();
-  });
+
+  if(satelliteMode && satelliteProduct==="infrared"){
+    loadInfraredTimeline(true).then(()=>{
+      if(!satelliteMode || satelliteProduct!=="infrared")return;
+
+      infraredFrameIndex=infraredFrames.length-1;
+      updateInfraredTimeline();
+
+      const layer=satelliteLayers.infrared;
+
+      if(layer){
+        const latest=new Date(infraredFrames[infraredFrameIndex].time);
+        layer.setTimeRange(latest,latest);
+      }else{
+        enableSatellite("infrared");
+      }
+    }).catch(error=>{
+      console.error("Falha ao atualizar histórico infravermelho:",error);
+      setSatelliteStatus("Erro ao atualizar","error","Não foi possível atualizar a lista de horários do GOES. Tente novamente.");
+    });
+  }else{
+    Object.values(satelliteLayers).forEach(layer=>{
+      if(layer && map.hasLayer(layer)){
+        layer.redraw();
+      }
+    });
+  }
 }
 
 $("refreshBtn").addEventListener("click",refreshData);
@@ -849,7 +1130,9 @@ setInterval(loadRadar,REFRESH_MS);
 
 setInterval(()=>{
   Object.values(satelliteLayers).forEach(layer=>{
-    if(layer && map.hasLayer(layer)) layer.redraw();
+    if(layer && map.hasLayer(layer)){
+      layer.redraw();
+    }
   });
 },GOES_REFRESH_MS);
 
