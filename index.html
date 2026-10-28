@@ -75,7 +75,7 @@ body.radar-mode #radarView{display:block}
 .dark-tiles{filter:invert(1) hue-rotate(180deg) brightness(.83) contrast(.9)}
 .radar-frame{transition:opacity .18s ease;will-change:opacity}
 
-.radar-toolbar{position:absolute;z-index:500;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:3px;max-width:calc(100% - 24px);padding:4px;border:1px solid var(--border);border-radius:9px;background:#0b111de8;box-shadow:0 6px 22px #0003;backdrop-filter:blur(12px)}
+.radar-toolbar{position:absolute;z-index:500;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:3px;max-width:calc(100% - 24px);padding:4px;border:1px solid var(--border);border-radius:9px;background:#0b111de8;box-shadow:0 6px 22px #0003;backdrop-filter:blur(12px);overflow-x:auto;white-space:nowrap}
 .map-tools{position:absolute;z-index:500;top:65px;left:12px;display:flex;flex-direction:column;gap:6px}
 .tool-btn{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--border);border-radius:9px;background:#0b111de8;color:white;font-size:17px}
 .map-label{position:absolute;z-index:500;top:65px;right:12px;max-width:190px;padding:9px 11px;border:1px solid var(--border);border-radius:9px;background:#0b111de8;color:var(--muted);font-size:10px;line-height:1.5}
@@ -111,7 +111,7 @@ body.radar-mode #radarView{display:block}
  .welcome{align-items:flex-start;flex-direction:column}.welcome .primary-btn{width:100%}
  .overview-grid{gap:8px}.overview-card{padding:12px;min-height:110px}.card-value{font-size:18px}
  .product-grid{gap:8px}.product-card{padding:12px}.monitor-panel{align-items:flex-start;flex-direction:column}.footer{flex-direction:column}
- .radar-toolbar{top:8px;gap:1px;padding:3px}.radar-tab{padding:6px 8px;font-size:10px}
+ .radar-toolbar{top:8px;gap:1px;padding:3px;overflow-x:auto;justify-content:flex-start}.radar-tab{padding:6px 8px;font-size:10px}
  .map-tools{top:54px;left:7px}.map-label{top:54px;right:7px;max-width:145px}
  .timeline{bottom:7px;padding:9px}.source-note{max-width:140px}
 }
@@ -166,7 +166,7 @@ body.radar-mode #radarView{display:block}
     <article class="overview-card">
       <div class="card-label">Satélite GOES</div>
       <div class="card-value" id="homeSatelliteValue">Disponível para teste</div>
-      <div class="card-description" id="homeSatelliteDescription">GeoColor NOAA · GOES-East e GOES-West</div>
+      <div class="card-description" id="homeSatelliteDescription">GeoColor e infravermelho canal 13 · NOAA/NESDIS</div>
     </article>
   </section>
 
@@ -175,7 +175,7 @@ body.radar-mode #radarView{display:block}
   <section class="product-grid">
     <button class="product-card" data-product="Radar de precipitação"><h3>◉ Radar de precipitação</h3><p>Imagens observadas, sequência temporal e navegação pelo mapa.</p><small>● DISPONÍVEL</small></button>
 
-    <button class="product-card" data-product="Satélite GOES"><h3>◌ Satélite GOES</h3><p>Imagens GeoColor das nuvens e da superfície observadas pelos satélites GOES.</p><small>● INTEGRAÇÃO BETA</small></button>
+    <button class="product-card" data-product="Satélite GOES"><h3>◌ Satélite GOES</h3><p>Imagens GeoColor e infravermelho do canal 13 para observar nuvens e topos de tempestades.</p><small>● INTEGRAÇÃO BETA</small></button>
 
     <button class="product-card" data-product="Modelos WRF"><h3>⌁ Modelos WRF</h3><p>Previsões de chuva, vento e parâmetros atmosféricos.</p><small>● EM DESENVOLVIMENTO</small></button>
 
@@ -193,7 +193,7 @@ body.radar-mode #radarView{display:block}
   <section class="monitor-panel">
     <div>
       <h3>Fontes e confiabilidade dos dados</h3>
-      <p>O radar utiliza imagens disponibilizadas pelo RainViewer. A camada GOES utiliza o serviço GeoColor público da NOAA. A disponibilidade e o horário das imagens dependem das fontes. Produtos ainda não integrados não exibem valores meteorológicos.</p>
+      <p>O radar utiliza imagens disponibilizadas pelo RainViewer. As camadas GOES usam serviços públicos da NOAA: GeoColor e infravermelho do canal 13. A disponibilidade e o horário das imagens dependem das fontes. Produtos ainda não integrados não exibem valores meteorológicos.</p>
     </div>
     <button class="mini-btn" id="homeRefreshBtn">Verificar conexão</button>
   </section>
@@ -211,7 +211,8 @@ body.radar-mode #radarView{display:block}
   <nav class="radar-toolbar">
     <button class="radar-tab active" id="precipBtn">Precipitação</button>
     <button class="radar-tab" data-product="Mosaico">Mosaico</button>
-    <button class="radar-tab" id="satelliteBtn" data-product="Satélite GOES">Satélite</button>
+    <button class="radar-tab" id="satelliteBtn">GeoColor</button>
+    <button class="radar-tab" id="infraredBtn">Infravermelho</button>
     <button class="radar-tab" data-product="Estações meteorológicas">Estações</button>
     <button class="radar-tab" data-product="Modelos WRF">WRF</button>
   </nav>
@@ -271,7 +272,8 @@ body.radar-mode #radarView{display:block}
 
 const FRANCA = [-20.5394,-47.4008];
 const API_URL = "https://api.rainviewer.com/public/weather-maps.json";
-const GOES_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/Most_Recent_MERGEDGC/ImageServer";
+const GOES_GEOCOLOR_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/Most_Recent_MERGEDGC/ImageServer";
+const GOES_IR_URL = "https://satellitemaps.nesdis.noaa.gov/arcgis/rest/services/ABI13_current/ImageServer";
 const REFRESH_MS = 5 * 60 * 1000;
 const GOES_REFRESH_MS = 10 * 60 * 1000;
 const $ = id => document.getElementById(id);
@@ -287,8 +289,9 @@ let usingDark = false;
 let requestNumber = 0;
 let animationWaiting = false;
 
-let satelliteLayer = null;
+let satelliteLayers = { geocolor:null, infrared:null };
 let satelliteMode = false;
+let satelliteProduct = "geocolor";
 
 const map = L.map("map", {
   zoomControl:false,
@@ -355,55 +358,49 @@ function openPage(page){
 }
 
 /* VOLTAR PARA A CAMADA DE RADAR */
+function removeSatelliteLayers(){
+  Object.values(satelliteLayers).forEach(layer=>{
+    if(layer && map.hasLayer(layer)) map.removeLayer(layer);
+  });
+}
+
 function activateRadarMode(){
   openPage("radar");
   satelliteMode=false;
-
   $("precipBtn").classList.add("active");
   $("satelliteBtn").classList.remove("active");
+  $("infraredBtn").classList.remove("active");
   $("layerTitle").textContent="Precipitação";
   $("layerDescription").textContent="Radar observado · RainViewer";
   $("radarTimeline").classList.remove("hidden");
   $("sourceNote").textContent="Fonte: RainViewer · imagens observadas";
-
-  if(satelliteLayer && map.hasLayer(satelliteLayer)){
-    map.removeLayer(satelliteLayer);
-  }
-
+  removeSatelliteLayers();
   if(activeRadarLayer && !map.hasLayer(activeRadarLayer)){
     activeRadarLayer.addTo(map);
   }else if(!activeRadarLayer && frames.length){
     showFrame(frameIndex);
   }
-
   requestAnimationFrame(()=>map.invalidateSize());
 }
 
-/* ABRIR A CAMADA DE SATÉLITE */
-function activateSatelliteMode(){
+/* ABRIR O GEOCOLOR OU O INFRAVERMELHO DO GOES */
+function activateSatelliteMode(product="geocolor"){
   openPage("radar");
   stopAnimation();
   satelliteMode=true;
-
+  satelliteProduct=product;
   $("precipBtn").classList.remove("active");
-  $("satelliteBtn").classList.add("active");
-  $("layerTitle").textContent="Satélite GOES · GeoColor";
-  $("layerDescription").textContent="GOES-East + GOES-West · NOAA/NESDIS";
+  $("satelliteBtn").classList.toggle("active",product==="geocolor");
+  $("infraredBtn").classList.toggle("active",product==="infrared");
   $("radarTimeline").classList.add("hidden");
-  $("sourceNote").textContent="Fonte: NOAA/NESDIS · imagens GeoColor";
-
   requestNumber++;
-
   if(pendingRadarLayer){
     if(map.hasLayer(pendingRadarLayer))map.removeLayer(pendingRadarLayer);
     pendingRadarLayer=null;
   }
-
-  if(activeRadarLayer && map.hasLayer(activeRadarLayer)){
-    map.removeLayer(activeRadarLayer);
-  }
-
-  enableSatellite();
+  if(activeRadarLayer && map.hasLayer(activeRadarLayer))map.removeLayer(activeRadarLayer);
+  removeSatelliteLayers();
+  enableSatellite(product);
   requestAnimationFrame(()=>map.invalidateSize());
 }
 
@@ -697,97 +694,110 @@ $("nextBtn").addEventListener("click",()=>{
   showFrame(Math.min(frameIndex+1,frames.length-1));
 });
 
-/* CAMADA DE SATÉLITE GOES */
+/* CAMADAS PÚBLICAS DE SATÉLITE GOES (NOAA/NESDIS) */
+function satelliteDetails(product){
+  if(product==="infrared"){
+    return {
+      key:"infrared",
+      url:GOES_IR_URL,
+      title:"Satélite GOES · Infravermelho (canal 13)",
+      description:"GOES-East · canal 13 · 10,3 μm · realce NOAA/NESDIS",
+      source:"Fonte: NOAA/NESDIS · GOES ABI canal 13",
+      loading:"Solicitando a imagem infravermelha do canal 13 à NOAA...",
+      connected:"Imagem infravermelha do GOES recebida. O horário da consulta não é necessariamente o horário exato da observação."
+    };
+  }
+  return {
+    key:"geocolor",
+    url:GOES_GEOCOLOR_URL,
+    title:"Satélite GOES · GeoColor",
+    description:"GOES-East + GOES-West · NOAA/NESDIS",
+    source:"Fonte: NOAA/NESDIS · imagens GeoColor",
+    loading:"Solicitando a imagem GeoColor à NOAA...",
+    connected:"Imagem GeoColor recebida. O horário da consulta não é necessariamente o horário exato da observação."
+  };
+}
+
 function setSatelliteStatus(title,state,message){
   $("homeSatelliteValue").textContent=title;
   $("homeSatelliteDescription").textContent=message;
-  $("sourceNote").textContent="Fonte: NOAA/NESDIS · imagens GeoColor";
+  $("sourceNote").textContent=satelliteDetails(satelliteProduct).source;
 }
 
-function createSatelliteLayer(){
-  if(!L.esri || typeof L.esri.imageMapLayer!=="function"){
+function createSatelliteLayer(product){
+  if(product!=="infrared" && (!L.esri || typeof L.esri.imageMapLayer!=="function")){
     throw new Error("A biblioteca Esri Leaflet não foi carregada.");
   }
-
-  const layer=L.esri.imageMapLayer({
-    url:GOES_URL,
-    pane:"satellitePane",
-    opacity:0.96,
-    format:"jpgpng",
-    useCors:true
-  });
-
+  const details=satelliteDetails(product);
+  let layer;
+  if(product==="infrared"){
+    /* ABI13_current é um ImageServer em cache; sua rota /tile usa nível/linha/coluna. */
+    layer=L.tileLayer(GOES_IR_URL+"/tile/{z}/{y}/{x}",{
+      minZoom:0,
+      maxZoom:23,
+      pane:"satellitePane",
+      opacity:0.96,
+      attribution:'Imagery &copy; <a href="https://www.nesdis.noaa.gov/" target="_blank" rel="noopener">NOAA/NESDIS</a> · GOES ABI canal 13'
+    });
+  }else{
+    layer=L.esri.imageMapLayer({
+      url:details.url,
+      pane:"satellitePane",
+      opacity:0.96,
+      format:"jpgpng",
+      useCors:true
+    });
+  }
   layer.on("loading",()=>{
-    if(satelliteMode){
-      setSatelliteStatus(
-        "Carregando...",
-        "warning",
-        "Solicitando imagem GeoColor à NOAA..."
-      );
+    if(satelliteMode && satelliteProduct===product){
+      setSatelliteStatus("Carregando...","warning",details.loading);
     }
   });
-
   layer.on("load",()=>{
-    if(satelliteMode){
+    if(satelliteMode && satelliteProduct===product){
       setSatelliteStatus(
         "Conectado",
         "online",
-        "GeoColor recebido. A consulta foi concluída às "+
-        new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+
-        ". O horário da consulta não é necessariamente o horário exato da observação."
+        details.connected+" Consulta: "+
+        new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})+"."
       );
     }
   });
-
+  layer.on("tileerror",event=>{
+    console.error("Erro em um bloco da camada GOES ("+product+"):",event);
+    if(satelliteMode && satelliteProduct===product){
+      setSatelliteStatus("Carregamento parcial","warning","Alguns blocos da imagem não carregaram. Tente Atualizar ou diminuir o zoom.");
+    }
+  });
   layer.on("error",event=>{
-    console.error("Erro na camada GOES:",event);
-
-    if(satelliteMode){
-      setSatelliteStatus(
-        "Erro",
-        "error",
-        "A NOAA não conseguiu entregar a imagem nesta tentativa. Confira a conexão e tente Atualizar."
-      );
+    console.error("Erro na camada GOES ("+product+"):",event);
+    if(satelliteMode && satelliteProduct===product){
+      setSatelliteStatus("Erro","error","A NOAA não conseguiu entregar esta imagem nesta tentativa. Confira a conexão e tente Atualizar.");
     }
   });
-
   return layer;
 }
 
-function enableSatellite(){
+function enableSatellite(product="geocolor"){
   try{
-    if(!satelliteLayer){
-      satelliteLayer=createSatelliteLayer();
-    }
-
-    if(!map.hasLayer(satelliteLayer)){
-      satelliteLayer.addTo(map);
-    }
-
-    setSatelliteStatus(
-      "Conectando...",
-      "warning",
-      "Conectando ao serviço GeoColor público da NOAA..."
-    );
-
-    $("layerTitle").textContent="Satélite GOES · GeoColor";
-    $("layerDescription").textContent="GOES-East + GOES-West · NOAA/NESDIS";
-    $("sourceNote").textContent="Fonte: NOAA/NESDIS · imagens GeoColor";
-
+    const details=satelliteDetails(product);
+    if(!satelliteLayers[details.key]) satelliteLayers[details.key]=createSatelliteLayer(product);
+    const layer=satelliteLayers[details.key];
+    if(!map.hasLayer(layer)) layer.addTo(map);
+    setSatelliteStatus("Conectando...","warning",details.loading);
+    $("layerTitle").textContent=details.title;
+    $("layerDescription").textContent=details.description;
+    $("sourceNote").textContent=details.source;
   }catch(error){
-    console.error("Não foi possível iniciar o satélite:",error);
-
-    setSatelliteStatus(
-      "Indisponível",
-      "error",
-      "Não foi possível iniciar a camada GOES. Verifique se as bibliotecas carregaram."
-    );
+    console.error("Não foi possível iniciar a camada GOES:",error);
+    setSatelliteStatus("Indisponível","error","Não foi possível iniciar esta camada GOES. Verifique se as bibliotecas carregaram.");
   }
 }
 
 /* BOTÕES DE CAMADA */
 $("precipBtn").addEventListener("click",activateRadarMode);
-$("satelliteBtn").addEventListener("click",activateSatelliteMode);
+$("satelliteBtn").addEventListener("click",()=>activateSatelliteMode("geocolor"));
+$("infraredBtn").addEventListener("click",()=>activateSatelliteMode("infrared"));
 
 /* MAPA-BASE */
 function toggleBaseMap(){
@@ -815,9 +825,9 @@ $("zoomOutBtn").addEventListener("click",()=>map.zoomOut());
 /* ATUALIZAR FONTES */
 function refreshData(){
   loadRadar();
-  if(satelliteLayer && map.hasLayer(satelliteLayer)){
-    satelliteLayer.redraw();
-  }
+  Object.values(satelliteLayers).forEach(layer=>{
+    if(layer && map.hasLayer(layer)) layer.redraw();
+  });
 }
 
 $("refreshBtn").addEventListener("click",refreshData);
@@ -838,9 +848,9 @@ loadRadar();
 setInterval(loadRadar,REFRESH_MS);
 
 setInterval(()=>{
-  if(satelliteLayer && map.hasLayer(satelliteLayer)){
-    satelliteLayer.redraw();
-  }
+  Object.values(satelliteLayers).forEach(layer=>{
+    if(layer && map.hasLayer(layer)) layer.redraw();
+  });
 },GOES_REFRESH_MS);
 
 openPage("home");
